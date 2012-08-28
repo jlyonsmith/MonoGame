@@ -123,8 +123,12 @@ namespace Microsoft.Xna.Framework.Graphics
 					i *= 2;
 				height = i;
 			}
-			// TODO: kMaxTextureSize = 1024
-			while((width > 1024) || (height > 1024)) 
+			
+			int maxTextureSize = 1024;
+
+			GL.GetInteger(All.MaxTextureSize, ref maxTextureSize);
+
+			while((width > maxTextureSize) || (height > maxTextureSize)) 
 			{
 				width /= 2;
 				height /= 2;
