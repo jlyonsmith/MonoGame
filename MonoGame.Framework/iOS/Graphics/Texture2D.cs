@@ -320,79 +320,62 @@ namespace Microsoft.Xna.Framework.Graphics
         {
             throw new NotImplementedException();
         }
-		
+
 		private byte[] GetImageData(int level)
 		{
-			
-			int framebufferId = -1;
-			int renderBufferID = -1;
-			
+			int textureFrameBuffer = -1;
+			int originalFrameBuffer = 0;
+
+			// Get the currently bound frame buffer object. On most platforms this just gives 0.				
+			GL.GetInteger(All.FramebufferBindingOes, ref originalFrameBuffer);
+
 			// create framebuffer
-			GL.Oes.GenFramebuffers(1, ref framebufferId);
-			GL.Oes.BindFramebuffer(All.FramebufferOes, framebufferId);
-			
-			//renderBufferIDs = new int[currentRenderTargets];
-			GL.Oes.GenRenderbuffers(1, ref renderBufferID);
+			GL.Oes.GenFramebuffers(1, ref textureFrameBuffer);
+			GL.Oes.BindFramebuffer(All.FramebufferOes, textureFrameBuffer);
 			
 			// attach the texture to FBO color attachment point
-			GL.Oes.FramebufferTexture2D(All.FramebufferOes, All.ColorAttachment0Oes,
-				All.Texture2D, ID,0);
-			
-			// create a renderbuffer object to store depth info
-			GL.Oes.BindRenderbuffer(All.RenderbufferOes, renderBufferID);
-			GL.Oes.RenderbufferStorage(All.RenderbufferOes, All.DepthComponent24Oes,
-				_width, _height);
-			
-			// attach the renderbuffer to depth attachment point
-			GL.Oes.FramebufferRenderbuffer(All.FramebufferOes, All.DepthAttachmentOes,
-				All.RenderbufferOes, renderBufferID);
-				
+			GL.Oes.FramebufferTexture2D(All.FramebufferOes, All.ColorAttachment0Oes, All.Texture2D, ID, 0);
+
 			All status = GL.Oes.CheckFramebufferStatus(All.FramebufferOes);
 			
 			if (status != All.FramebufferCompleteOes)
 				throw new Exception("Error creating framebuffer: " + status);
 			
 			byte[] imageInfo;
-			int sz = 0;
+			int pixelBytes = 0;
 			
-			switch (_format) {
+			switch (_format) 
+			{
 			case SurfaceFormat.Color : //kTexture2DPixelFormat_RGBA8888
 			case SurfaceFormat.Dxt3 :
-				
-				sz = 4;
-				imageInfo = new byte[(_width * _height) * sz];
+				pixelBytes = 4;
+				imageInfo = new byte[(_width * _height) * pixelBytes];
 				break;
 			case SurfaceFormat.Bgra4444 : //kTexture2DPixelFormat_RGBA4444
-				sz = 2;
-				imageInfo = new byte[(_width * _height) * sz];
-				
+				pixelBytes = 2;
+				imageInfo = new byte[(_width * _height) * pixelBytes];
 				break;
 			case SurfaceFormat.Bgra5551 : //kTexture2DPixelFormat_RGB5A1
-				sz = 2;
-				imageInfo = new byte[(_width * _height) * sz];
+				pixelBytes = 2;
+				imageInfo = new byte[(_width * _height) * pixelBytes];
 				break;
 			case SurfaceFormat.Alpha8 :  // kTexture2DPixelFormat_A8 
-				sz = 1;
-				imageInfo = new byte[(_width * _height) * sz];
+				pixelBytes = 1;
+				imageInfo = new byte[(_width * _height) * pixelBytes];
 				break;
 			default:
-				throw new NotSupportedException ("Texture format");
+				throw new NotSupportedException("Texture format");
 			}
 			
-			GL.ReadPixels(0,0, _width, _height, All.Rgba, All.UnsignedByte, imageInfo);
+			GL.ReadPixels(0, 0, _width, _height, All.Rgba, All.UnsignedByte, imageInfo);
 
-			// Detach the render buffers.
-			GL.Oes.FramebufferRenderbuffer(All.FramebufferOes, All.DepthAttachmentOes,
-					All.RenderbufferOes, 0);
-			// delete the RBO's
-			GL.Oes.DeleteRenderbuffers(1,ref renderBufferID);
+			// Set the frame buffer back to the original frame buffer
+			GL.Oes.BindFramebuffer(All.FramebufferOes, originalFrameBuffer);			
+
 			// delete the FBO
-			GL.Oes.DeleteFramebuffers(1, ref framebufferId);
-			// Set the frame buffer back to the system window buffer
-			GL.Oes.BindFramebuffer(All.FramebufferOes, 0);			
+			GL.Oes.DeleteFramebuffers(1, ref textureFrameBuffer);
 
 			return imageInfo;
-					
 		}
 		
 		

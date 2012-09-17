@@ -46,127 +46,55 @@ using System.IO;
 using System.Drawing;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+
 namespace  Microsoft.Xna.Framework.Graphics
 {
 	public static class Extender
 	{
-		public static UIImage FromPdf(string name)
+		#region Public Methods
+		public static UIImage FromPdf(string fileName)
 		{
-			return imageWithPDFNamed(name,UIScreen.MainScreen.Scale);
+			return FromPdf(fileName, -1, -1);
 		}
 				
-		public static UIImage FromPdf(string name, float width,float height)
+		public static UIImage FromPdf(string fileName, float width, float height)
 		{
-			CGPDFDocument doc = CreatePDFDocumentWithName(name ) ;
-			if ( doc == null)
+			using (CGPDFDocument doc = CGPDFDocument.FromFile(fileName))
 			{
-				return null ;
-			}
-		
-			// PDF pages are numbered starting at page 1
-			CGPDFPage page = doc.GetPage(1);
-			
-			RectangleF box = page.GetBoxRect(CGPDFBox.Crop);
-			
-			var xScale = (width * UIScreen.MainScreen.Scale) / box.Width;
-			var yScale = (height * UIScreen.MainScreen.Scale) / box.Height;
-			
-			
-			var result = imageWithPDFPage(page,Math.Max(xScale,yScale),CGAffineTransform.MakeIdentity());
-			return result ;
-		}
-		
-		static CGPDFDocument CreatePDFDocumentWithName( string pdfName )
-		{
-			
-			var name = Path.GetFileNameWithoutExtension(pdfName);
-			var pdfPath = Path.GetDirectoryName(pdfName);
-			var path = Path.Combine(pdfPath,name + ".pdf");
-			
-			CGPDFDocument doc = CGPDFDocument.FromFile(path);
-		
-			return doc ;
-		}	
-		
-		static UIImage imageWithPDFPage (CGPDFPage page, float scale ,CGAffineTransform t )
-		{
-			if (page == null)
-			{
-				return null ;
-			}
-		
-			RectangleF box = page.GetBoxRect(CGPDFBox.Crop);
-			t.Scale(scale,scale);
-			box = new RectangleF(box.Location,new SizeF(box.Size.Width * scale, box.Size.Height * scale));
-		
-			var pixelWidth = box.Size.Width ;
-			CGColorSpace cs = CGColorSpace.CreateDeviceRGB() ;
-			//DebugAssert( cs ) ;
-			var _buffer = Marshal.AllocHGlobal((int)(box.Width * box.Height));
-			UIGraphics.BeginImageContext(box.Size);
-			CGContext c = UIGraphics.GetCurrentContext();
-			c.SaveState();
-			c.TranslateCTM(0f,box.Height);
-			c.ScaleCTM(1f,-1f);
-			cs.Dispose();
-			c.ConcatCTM(t);
-			c.DrawPDFPage(page);
-		
-			c.RestoreState();
-			var image = UIGraphics.GetImageFromCurrentImageContext();
-			
-			return image ;
-		}
-		
-		static UIImage[] imagesWithPDFNamed (string name, float scale ,CGAffineTransform t)
-		{
-			CGPDFDocument doc = CreatePDFDocumentWithName(name ) ;
-			List<UIImage> images = new List<UIImage>();
-		
-			// PDF pages are numbered starting at page 1
-			for( int pageIndex=1; pageIndex <= doc.Pages; ++pageIndex )
-			{
-				var page = doc.GetPage(pageIndex);
-				UIImage image = imageWithPDFPage(page,scale,t);
-				if(image != null)
-					images.Add(image);
-			}
-		
-			return images.ToArray() ;
-		}
-		
-		
-		static UIImage[] imagesWithPDFNamed (string name,float scale)
-		{
-			return imagesWithPDFNamed(name,scale,CGAffineTransform.MakeIdentity());
-		}
+				if (doc == null)
+					return null;
 
+				if (doc.Pages == 0)
+					return null;
 
-		static UIImage imageWithPDFNamed (string name,float scale,CGAffineTransform t)
-		{
-			CGPDFDocument doc = CreatePDFDocumentWithName(name ) ;
-			if ( doc == null)
-			{
-				return null ;
-			}
-		
-			// PDF pages are numbered starting at page 1
-			CGPDFPage page = doc.GetPage(1);
-			
-			var result = imageWithPDFPage(page,scale,t);
-			return result ;
+				CGPDFPage page = doc.GetPage(1);
+				RectangleF box = page.GetBoxRect(CGPDFBox.Crop);
+
+				if (width < 0 || height < 0)
+				{
+					width = box.Width;
+					height = box.Height;
+				}
+
+				float sx = width / box.Width;
+				float sy = height / box.Height;
+
+				using (CGColorSpace colorSpace = CGColorSpace.CreateDeviceRGB())
+				{
+					using (CGBitmapContext bitmapContext = new CGBitmapContext(
+						null, (int)width, (int)height, 8, (int)width * 4, colorSpace, CGImageAlphaInfo.PremultipliedLast))
+					{
+						bitmapContext.ScaleCTM(sx, sy);
+						bitmapContext.DrawPDFPage(page);
+
+						using (CGImage image = bitmapContext.ToImage())
+						{
+							return UIImage.FromImage(image);
+						}
+					}
+                }
+            }
 		}
-
-		static UIImage imageWithPDFNamed (string name, float scale)
-		{
-			return imageWithPDFNamed(name,scale,CGAffineTransform.MakeIdentity());
-		}
-
-		
-		
-		
-		
+		#endregion
 	}
-	
-
 }

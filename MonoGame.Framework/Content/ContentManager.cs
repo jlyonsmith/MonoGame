@@ -53,11 +53,11 @@ namespace Microsoft.Xna.Framework.Content
 {
     public partial class ContentManager : IDisposable
     {
-        private string _rootDirectory = string.Empty;
-        private IServiceProvider serviceProvider;
-        private IGraphicsDeviceService graphicsDeviceService;
+        private string rootDirectory = string.Empty;
+		private bool disposed;		                        
+		protected IServiceProvider serviceProvider;
+        protected IGraphicsDeviceService graphicsDeviceService;
         protected Dictionary<string, object> loadedAssets = new Dictionary<string, object>();
-        bool disposed;		                        
 
         private static object ContentManagerLock = new object();
         private static List<ContentManager> ContentManagers = new List<ContentManager>();
@@ -88,19 +88,6 @@ namespace Microsoft.Xna.Framework.Content
                     contentManager.ReloadContent();
                 }
             }
-        }
-
-        // Use C# destructor syntax for finalization code.
-        // This destructor will run only if the Dispose method
-        // does not get called.
-        // It gives your base class the opportunity to finalize.
-        // Do not provide destructors in types derived from this class.
-        ~ContentManager()
-        {
-            // Do not re-create Dispose clean-up code here.
-            // Calling Dispose(false) is optimal in terms of
-            // readability and maintainability.
-            Dispose(false);
         }
 
         public ContentManager(IServiceProvider serviceProvider)
@@ -136,8 +123,6 @@ namespace Microsoft.Xna.Framework.Content
             GC.SuppressFinalize(this);
         }
 
-        // If disposing is true, it was called explicitly.
-        // If disposing is false, it was called by the finalizer.
         protected virtual void Dispose(bool disposing)
         {
             if (disposing && !disposed)
@@ -147,12 +132,47 @@ namespace Microsoft.Xna.Framework.Content
             }
         }
 
+		public IServiceProvider ServiceProvider
+		{
+			get
+			{
+				return serviceProvider;
+			}
+		}
+
+		public string RootDirectory
+		{
+			get
+			{
+				return rootDirectory;
+			}
+			set
+			{
+				// TODO: Shouldn't this unload all the existing 
+				// content if the value changes?
+				rootDirectory = value;
+			}
+		}
+
+		protected void EnsureGraphicsDeviceService()
+		{
+			if (this.graphicsDeviceService == null)
+			{
+				this.graphicsDeviceService = serviceProvider.GetService(typeof(IGraphicsDeviceService)) as IGraphicsDeviceService;
+				if (this.graphicsDeviceService == null)
+				{
+					throw new InvalidOperationException("No Graphics Device Service");
+				}
+			}
+		}
+
         public virtual T Load<T>(string assetName)
         {
             if (string.IsNullOrEmpty(assetName))
             {
                 throw new ArgumentNullException("assetName");
             }
+
             if (disposed)
             {
                 throw new ObjectDisposedException("ContentManager");
@@ -174,7 +194,6 @@ namespace Microsoft.Xna.Framework.Content
             // Cache the result.
             if (!loadedAssets.ContainsKey(assetName))
             {
-
                 loadedAssets.Add(assetName, result);
             }
 
@@ -183,236 +202,185 @@ namespace Microsoft.Xna.Framework.Content
 
         protected T ReadAsset<T>(string assetName, Action<IDisposable> recordDisposableObject)
         {
-            if (string.IsNullOrEmpty(assetName))
-            {
-                throw new ArgumentNullException("assetName");
-            }
-            if (disposed)
-            {
-                throw new ObjectDisposedException("ContentManager");
-            }
+            EnsureGraphicsDeviceService();
 
-            string originalAssetName = assetName;
-            object result = null;
+			T result = ReadAsset<T>(assetName);
 
-            if (this.graphicsDeviceService == null)
-            {
-                this.graphicsDeviceService = serviceProvider.GetService(typeof(IGraphicsDeviceService)) as IGraphicsDeviceService;
-                if (this.graphicsDeviceService == null)
-                {
-                    throw new InvalidOperationException("No Graphics Device Service");
-                }
-            }
+			IDisposable resultAsDisposable = result as IDisposable;
 
-            // Replace Windows path separators with local path separators
-            assetName = GetFilename(assetName);
+            if (recordDisposableObject != null && resultAsDisposable != null)
+                recordDisposableObject(resultAsDisposable);
 
-            // Get the real file name
-            if ((typeof(T) == typeof(Curve))) 
-            {				
-                assetName = CurveReader.Normalize(assetName);
-            }
-            else if ((typeof(T) == typeof(Texture2D)))
-            {
-                assetName = Texture2DReader.Normalize(assetName);
-            }
-            else if ((typeof(T) == typeof(SpriteFont)))
-            {
-                assetName = SpriteFontReader.Normalize(assetName);
-            }
-            else if ((typeof(T) == typeof(Effect)))
-            {
-                assetName = Effect.Normalize(assetName);
-            }
-            else if ((typeof(T) == typeof(Song)))
-            {
-                assetName = SongReader.Normalize(assetName);
-            }
-            else if ((typeof(T) == typeof(SoundEffect)))
-            {
-                assetName = SoundEffectReader.Normalize(assetName);
-            }
-            else if ((typeof(T) == typeof(Video)))
-            {
-                assetName = Video.Normalize(assetName);
-            }
+            return result;
+        }
 
-            if (string.IsNullOrEmpty(assetName))
-            {
-                throw new ContentLoadException("Could not load " + originalAssetName + " asset!");
-            }
+		protected virtual T ReadAsset<T>(string assetName)
+		{
+			Type assetType = typeof(T);
+			string assetFileName = GetAssetFileName(assetName, assetType);
 
-            if (!Path.HasExtension(assetName))
-                assetName = string.Format("{0}.xnb", assetName);
-
-            if (Path.GetExtension(assetName).ToLower() == ".xnb")
-            {
-                // Load a XNB file
-                Stream stream = OpenStream(assetName);
-                try
-                {
-                    using (BinaryReader xnbReader = new BinaryReader(stream))
-                    {
-                        // The first 4 bytes should be the "XNB" header. i use that to detect an invalid file
-                        byte x = xnbReader.ReadByte();
-                        byte n = xnbReader.ReadByte();
-                        byte b = xnbReader.ReadByte();
-                        byte platform = xnbReader.ReadByte();
-
-                        if (x != 'X' || n != 'N' || b != 'B' ||
-                            !(platform == 'w' || platform == 'x' || platform == 'm'))
-                        {
-                            throw new ContentLoadException("Asset does not appear to be a valid XNB file. Did you process your content for Windows?");
-                        }
-
-                        byte version = xnbReader.ReadByte();
-                        byte flags = xnbReader.ReadByte();
-
-                        bool compressed = (flags & 0x80) != 0;
-                        if (version != 5 && version != 4)
-                        {
-                            throw new ContentLoadException("Invalid XNB version");
-                        }
-
-                        // The next int32 is the length of the XNB file
-                        int xnbLength = xnbReader.ReadInt32();
-
-                        ContentReader reader;
-                        if (compressed)
-                        {
+			object result = null;
+			
+			if (Path.GetExtension(assetFileName).ToLower() == ".xnb")
+			{
+				// Load a XNB file
+				Stream stream = OpenStream(assetFileName);
+				try
+				{
+					using (BinaryReader xnbReader = new BinaryReader(stream))
+					{
+						// The first 4 bytes should be the "XNB" header. i use that to detect an invalid file
+						byte x = xnbReader.ReadByte();
+						byte n = xnbReader.ReadByte();
+						byte b = xnbReader.ReadByte();
+						byte platform = xnbReader.ReadByte();
+						
+						if (x != 'X' || n != 'N' || b != 'B' ||
+						    !(platform == 'w' || platform == 'x' || platform == 'm'))
+						{
+							throw new ContentLoadException("Asset does not appear to be a valid XNB file. Did you process your content for Windows?");
+						}
+						
+						byte version = xnbReader.ReadByte();
+						byte flags = xnbReader.ReadByte();
+						
+						bool compressed = (flags & 0x80) != 0;
+						if (version != 5 && version != 4)
+						{
+							throw new ContentLoadException("Invalid XNB version");
+						}
+						
+						// The next int32 is the length of the XNB file
+						int xnbLength = xnbReader.ReadInt32();
+						
+						ContentReader reader;
+						if (compressed)
+						{
 							
 							LzxDecoder dec = new LzxDecoder(16);  							
-                            //decompress the xnb
-                            //thanks to ShinAli (https://bitbucket.org/alisci01/xnbdecompressor)
-                            int compressedSize = xnbLength - 14;
-                            int decompressedSize = xnbReader.ReadInt32();
-                            int newFileSize = decompressedSize + 10;
-
-                            MemoryStream decompressedStream = new MemoryStream(decompressedSize);
-
-                            int decodedBytes = 0;
-                            int pos = 0;							
-
+							//decompress the xnb
+							//thanks to ShinAli (https://bitbucket.org/alisci01/xnbdecompressor)
+							int compressedSize = xnbLength - 14;
+							int decompressedSize = xnbReader.ReadInt32();
+							int newFileSize = decompressedSize + 10;
+							
+							MemoryStream decompressedStream = new MemoryStream(decompressedSize);
+							
+							int decodedBytes = 0;
+							int pos = 0;							
+							
 #if ANDROID
-                            // Android native stream does not support the Position property. LzxDecoder.Decompress also uses
-                            // Seek.  So we read the entirity of the stream into a memory stream and replace stream with the
-                            // memory stream.
-                            MemoryStream memStream = new MemoryStream();
-                            stream.CopyTo(memStream);
-                            memStream.Seek(0, SeekOrigin.Begin);
-                            stream.Dispose();
-                            stream = memStream;
-                            pos = -14;
+							// Android native stream does not support the Position property. LzxDecoder.Decompress also uses
+							// Seek.  So we read the entirity of the stream into a memory stream and replace stream with the
+							// memory stream.
+							MemoryStream memStream = new MemoryStream();
+							stream.CopyTo(memStream);
+							memStream.Seek(0, SeekOrigin.Begin);
+							stream.Dispose();
+							stream = memStream;
+							pos = -14;
 #endif
-
-                            while (pos < compressedSize)
-                            {
-                                // let's seek to the correct position
-                                // The stream should already be in the correct position, and seeking can be slow
-                                stream.Seek(pos + 14, SeekOrigin.Begin);
-                                int hi = stream.ReadByte();
-                                int lo = stream.ReadByte();
-                                int block_size = (hi << 8) | lo;
-                                int frame_size = 0x8000;
-                                if (hi == 0xFF)
-                                {
-                                    hi = lo;
-                                    lo = (byte)stream.ReadByte();
-                                    frame_size = (hi << 8) | lo;
-                                    hi = (byte)stream.ReadByte();
-                                    lo = (byte)stream.ReadByte();
-                                    block_size = (hi << 8) | lo;
-                                    pos += 5;
-                                }
-                                else
-                                    pos += 2;
-
-                                if (block_size == 0 || frame_size == 0)
-                                    break;
-
-                                int lzxRet = dec.Decompress(stream, block_size, decompressedStream, frame_size);
-                                pos += block_size;
-                                decodedBytes += frame_size;
-                            }
-
-                            if (decompressedStream.Position != decompressedSize)
-                            {
-                                throw new ContentLoadException("Decompression of " + originalAssetName + "failed. " +
-                                                               " Try decompressing with nativeDecompressXnb first.");
-                            }
-
-                            decompressedStream.Seek(0, SeekOrigin.Begin);
-                            reader = new ContentReader(this, decompressedStream, this.graphicsDeviceService.GraphicsDevice, originalAssetName);
-                        }
-                        else
-                        {
-                            reader = new ContentReader(this, stream, this.graphicsDeviceService.GraphicsDevice, originalAssetName);
-                        }
-
-                        using (reader)
-                        {
-                            result = reader.ReadAsset<T>();
-                        }
-                    }
-                }
-                finally
-                {
-                    if (stream != null)
-                    {
-                        stream.Dispose();
-                    }
-                }
-            }
-            else
-            {
-                if ((typeof(T) == typeof(Texture2D)))
-                {
+							
+							while (pos < compressedSize)
+							{
+								// let's seek to the correct position
+								// The stream should already be in the correct position, and seeking can be slow
+								stream.Seek(pos + 14, SeekOrigin.Begin);
+								int hi = stream.ReadByte();
+								int lo = stream.ReadByte();
+								int block_size = (hi << 8) | lo;
+								int frame_size = 0x8000;
+								if (hi == 0xFF)
+								{
+									hi = lo;
+									lo = (byte)stream.ReadByte();
+									frame_size = (hi << 8) | lo;
+									hi = (byte)stream.ReadByte();
+									lo = (byte)stream.ReadByte();
+									block_size = (hi << 8) | lo;
+									pos += 5;
+								}
+								else
+									pos += 2;
+								
+								if (block_size == 0 || frame_size == 0)
+									break;
+								
+								int lzxRet = dec.Decompress(stream, block_size, decompressedStream, frame_size);
+								pos += block_size;
+								decodedBytes += frame_size;
+							}
+							
+							if (decompressedStream.Position != decompressedSize)
+							{
+								throw new ContentLoadException(
+									String.Format("Decompression of asset '{0}' failed. Try decompressing with nativeDecompressXnb first.", assetName));
+							}
+							
+							decompressedStream.Seek(0, SeekOrigin.Begin);
+							reader = new ContentReader(this, decompressedStream, this.graphicsDeviceService.GraphicsDevice, assetName);
+						}
+						else
+						{
+							reader = new ContentReader(this, stream, this.graphicsDeviceService.GraphicsDevice, assetName);
+						}
+						
+						using (reader)
+						{
+							result = reader.ReadAsset<T>();
+						}
+					}
+				}
+				finally
+				{
+					if (stream != null)
+					{
+						stream.Dispose();
+					}
+				}
+			}
+			else
+			{
+				if (assetType == typeof(Texture2D))
+				{
 #if IPHONE
-					Texture2D texture = Texture2D.FromFile(graphicsDeviceService.GraphicsDevice, assetName);
-                    texture.Name = originalAssetName;
-                    result = texture;
+					Texture2D texture = Texture2D.FromFile(graphicsDeviceService.GraphicsDevice, assetFileName);
+					texture.Name = assetName;
+					result = texture;
 #else
-                    using (Stream assetStream = OpenStream(assetName))
-                    {
-                        Texture2D texture = Texture2D.FromFile(graphicsDeviceService.GraphicsDevice, assetStream);
-                        texture.Name = originalAssetName;
-                        result = texture;
-                    }
+					using (Stream assetStream = OpenStream(assetName))
+					{
+						Texture2D texture = Texture2D.FromFile(graphicsDeviceService.GraphicsDevice, assetStream);
+						texture.Name = assetName;
+						result = texture;
+					}
 #endif
-                }
-                else if ((typeof(T) == typeof(SpriteFont)))
-                {
-                    //result = new SpriteFont(Texture2D.FromFile(graphicsDeviceService.GraphicsDevice,assetName), null, null, null, 0, 0.0f, null, null);
-                    throw new NotImplementedException();
-                }
-                else if ((typeof(T) == typeof(Song)))
-                {
-                    result = new Song(assetName);
-                }
-                else if ((typeof(T) == typeof(SoundEffect)))
-                {
-                    result = new SoundEffect(assetName);
-                }
-                else if ((typeof(T) == typeof(Video)))
-                {
-                    result = new Video(assetName);
-                }
-                else if ((typeof(T) == typeof(Effect)))
-                {
-                    result = new Effect(graphicsDeviceService.GraphicsDevice, assetName);
-                }
-            }
+				}
+				else if (assetType == typeof(SpriteFont))
+				{
+					//result = new SpriteFont(Texture2D.FromFile(graphicsDeviceService.GraphicsDevice,assetName), null, null, null, 0, 0.0f, null, null);
+					throw new NotImplementedException();
+				}
+				else if (assetType == typeof(Song))
+				{
+					result = new Song(assetFileName);
+				}
+				else if (assetType == typeof(SoundEffect))
+				{
+					result = new SoundEffect(assetFileName);
+				}
+				else if (assetType == typeof(Video))
+				{
+					result = new Video(assetFileName);
+				}
+				else if (assetType == typeof(Effect))
+				{
+					result = new Effect(graphicsDeviceService.GraphicsDevice, assetFileName);
+				}
+			}
 
-            if (result == null)
-            {
-                throw new ContentLoadException("Could not load " + originalAssetName + " asset!");
-            }
-
-            if ( recordDisposableObject != null && result is IDisposable )
-                recordDisposableObject(result as IDisposable);
-
-            return (T)result;
-        }
+			return (T)result;
+		}
 
         protected void ReloadContent()
         {
@@ -422,93 +390,35 @@ namespace Microsoft.Xna.Framework.Content
             }
         }
 
-        protected void ReloadAsset(string originalAssetName, object currentAsset)
+        protected virtual void ReloadAsset(string assetName, object currentAsset)
         {
-            if (string.IsNullOrEmpty(originalAssetName))
-            {
-                throw new ArgumentNullException("assetName");
-            }
-            if (disposed)
-            {
-                throw new ObjectDisposedException("ContentManager");
-            }
+			EnsureGraphicsDeviceService();
 
-            if (this.graphicsDeviceService == null)
+			string assetFileName = GetAssetFileName(assetName, currentAsset.GetType());
+
+            if (Path.GetExtension(assetFileName).ToLower() != ".xnb")
             {
-                this.graphicsDeviceService = serviceProvider.GetService(typeof(IGraphicsDeviceService)) as IGraphicsDeviceService;
-                if (this.graphicsDeviceService == null)
+                if (currentAsset is Texture2D)
                 {
-                    throw new InvalidOperationException("No Graphics Device Service");
-                }
-            }
-
-            // Replace Windows path separators with local path separators
-            var assetName = GetFilename(originalAssetName);
-
-            // Get the real file name
-            if ((currentAsset is Curve))
-            {
-                assetName = CurveReader.Normalize(assetName);
-            }
-            else if ((currentAsset is Texture2D))
-            {
-                assetName = Texture2DReader.Normalize(assetName);
-            }
-            else if ((currentAsset is SpriteFont))
-            {
-                assetName = SpriteFontReader.Normalize(assetName);
-            }
-            else if ((currentAsset is Effect))
-            {
-                assetName = Effect.Normalize(assetName);
-            }
-            else if ((currentAsset is Song))
-            {
-                assetName = SongReader.Normalize(assetName);
-            }
-            else if ((currentAsset is SoundEffect))
-            {
-                assetName = SoundEffectReader.Normalize(assetName);
-            }
-            else if ((currentAsset is Video))
-            {
-                assetName = Video.Normalize(assetName);
-            }
-
-            if (string.IsNullOrEmpty(assetName))
-            {
-                throw new ContentLoadException("Could not load " + originalAssetName + " asset!");
-            }
-
-            if (!Path.HasExtension(assetName))
-                assetName = string.Format("{0}.xnb", assetName);
-
-            if (Path.GetExtension(assetName).ToLower() == ".xnb")
-            {
-            }
-            else
-            {
-                if ((currentAsset is Texture2D))
-                {
-                    using (Stream assetStream = OpenStream(assetName))
+                    using (Stream assetStream = OpenStream(assetFileName))
                     {
-                        var asset = currentAsset as Texture2D;
+                        var asset = (Texture2D)currentAsset;
                         asset.Reload(assetStream);
                     }
                 }
-                else if ((currentAsset is SpriteFont))
+                else if (currentAsset is SpriteFont)
                 {
                 }
-                else if ((currentAsset is Song))
+                else if (currentAsset is Song)
                 {
                 }
-                else if ((currentAsset is SoundEffect))
+                else if (currentAsset is SoundEffect)
                 {
                 }
-                else if ((currentAsset is Video))
+                else if (currentAsset is Video)
                 {
                 }
-                else if ((currentAsset is Effect))
+                else if (currentAsset is Effect)
                 {
                 }
             }
@@ -528,25 +438,46 @@ namespace Microsoft.Xna.Framework.Content
             loadedAssets.Clear();
         }
 
-        public string RootDirectory
-        {
-            get
-            {
-                return _rootDirectory;
-            }
-            set
-            {
-                _rootDirectory = value;
-            }
-        }
+		protected string GetAssetFileName(string assetName, Type assetType)
+		{
+			var assetFileName = GetFilename(assetName);
 
-        public IServiceProvider ServiceProvider
-        {
-            get
-            {
-                return this.serviceProvider;
-            }
-        }
+			// Get the real file name
+			if (assetType == typeof(Curve))
+			{				
+				assetFileName = CurveReader.Normalize(assetFileName);
+			} else if (assetType == typeof(Texture2D))
+			{
+				assetFileName = Texture2DReader.Normalize(assetFileName);
+			} else if (assetType == typeof(SpriteFont))
+			{
+				assetFileName = SpriteFontReader.Normalize(assetFileName);
+			} else if (assetType == typeof(Effect))
+			{
+				assetFileName = Effect.Normalize(assetFileName);
+			} else if (assetType == typeof(Song))
+			{
+				assetFileName = SongReader.Normalize(assetFileName);
+			} else if (assetType == typeof(SoundEffect))
+			{
+				assetFileName = SoundEffectReader.Normalize(assetFileName);
+			} else if (assetType == typeof(Video))
+			{
+				assetFileName = Video.Normalize(assetFileName);
+			}
+
+			if (string.IsNullOrEmpty(assetFileName))
+			{
+				throw new ContentLoadException ("Could not determine file name for '" + assetName + "' asset!");
+			}
+
+			if (!Path.HasExtension(assetFileName))
+			{
+				assetFileName = assetFileName + ".xnb";
+			}
+
+			return assetFileName;
+		}
     }
 }
 
